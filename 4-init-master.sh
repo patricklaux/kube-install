@@ -5,4 +5,3 @@
 set -euxo pipefail
 
 sudo kubeadm init --config=./kubeadm/kubeadm-init-nftables.yaml
-

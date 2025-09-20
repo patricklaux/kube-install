@@ -7,6 +7,7 @@ localAPIEndpoint:
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
 controlPlaneEndpoint: cluster-endpoint
+kubernetesVersion: 1.34.1
 networking:
   # 与 kubeadm init --service-cidr=10.96.0.0/12 同含义
   serviceSubnet: 10.96.0.0/12

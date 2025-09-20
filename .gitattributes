@@ -1,0 +1,7 @@
+*.tgz filter=lfs diff=lfs merge=lfs -text
+*.gz filter=lfs diff=lfs merge=lfs -text
+calico/calicoctl-linux-amd64 filter=lfs diff=lfs merge=lfs -text
+containerd/cni-plugins-linux-amd64-v1.8.0.tgz filter=lfs diff=lfs merge=lfs -text
+containerd/containerd-2.1.4-linux-amd64.tar.gz filter=lfs diff=lfs merge=lfs -text
+containerd/runc.amd64 filter=lfs diff=lfs merge=lfs -text
+
