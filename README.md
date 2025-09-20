@@ -6,7 +6,7 @@ Scripts and files for installing Kubernetes.
 
 > ⚠️ 注意：
 >
-> 本项目仅用于搭建个人学习环境，请勿用于生产环境。
+> 本项目包含部分技术预览特性，且未考虑安全性、可用性和性能优化，请勿直接用于生产环境。
 >
 > 本项目的相关脚本和软件安装包依赖于特定平台和环境，请按需调整，勿直接使用。
 >
@@ -100,17 +100,252 @@ kube-install/
 
 ### 文件夹说明
 
-- `calico`：网络插件 calico 的相关配置和安装软件包。
-- `containerd`：容器运行时 containerd 的相关配置和安装软件包。
+- `calico`：网络插件 calico 的相关配置和软件安装包。
+- `containerd`：容器运行时 containerd 的相关配置和软件安装包。
 - `kubeadm`：集群初始化配置文件。
 
-### 其它说明
+### 目录约定
 
-> 注：
->
-> 1、所有文件仅需上传到主节点，文件目录约定：`/home/$user/workspace/kube-install/`
->
-> 2、某些脚本使用的是相对路径，请进入到 `kube-install` 目录执行脚本。
+1、所有文件仅需上传到主节点，文件目录：`/home/$user/workspace/kube-install/`
+
+2、某些脚本使用相对路径，请务必进入到 `kube-install` 目录再执行脚本。
+
+### 节点信息
+
+示例集群共有 3 个节点：1 个主节点和 2 个工作节点。
+
+操作系统均为 Ubuntu 24.04.3，硬件配置为 4C - 8G - 200G 虚拟机，详细信息如下：
+
+|       IP       |    主机名     |   角色    |
+| :------------: | :-----------: | :-------: |
+| 192.168.50.130 | k8s-control-1 | 控制平面  |
+| 192.168.50.135 | k8s-worker-1  | 工作节点1 |
+| 192.168.50.136 | k8s-worker-2  | 工作节点2 |
+
+### 安装版本
+
+**Kubernetes** 1.34.1
+
+**Containerd** 2.1.4
+
+**Calico** 3.30.3
+
+### 配置文件
+
+#### Kubeadm 配置
+
+文件 `kubeadm-init-nftables.yaml` 由以下命令生成：
+
+```yaml
+# 生成默认配置文件
+kubeadm config print init-defaults -v=5 --component-configs KubeProxyConfiguration,KubeletConfiguration > kubeadm-init-nftables.yaml
+```
+
+根据默认文件进行修改和删减后，仅保留了已修改项。
+
+> 注：Kubeadm 读取配置时，未配置项将使用默认值。
+
+这份配置文件，需要特别注意子网范围和主节点 IP，请根据网络环境进行修改：
+
+1、第 4 行：`advertiseAddress` 请设定为你的主节点 IP。
+
+2、第 13 行 `serviceSubnet ` ，第 14 行 `podSubnet`，第 19 行 `clusterCIDR`：
+
+- `podSubnet` 和`clusterCIDR` 必须保持一致；
+- `serviceSubnet ` 、`podSubnet` 的子网范围不能重叠，且与其它的子网范围也不能重叠。
+
+```yaml
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 192.168.50.130
+  bindPort: 6443
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+controlPlaneEndpoint: cluster-endpoint
+kubernetesVersion: 1.34.1
+networking:
+  # 与 kubeadm init --service-cidr=10.96.0.0/12 同含义
+  serviceSubnet: 10.96.0.0/12
+  podSubnet: 172.30.0.0/16
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+# 与 podSubnet 保持一致
+clusterCIDR: 172.30.0.0/16
+# 配置为使用 nftables
+mode: nftables
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+cgroupDriver: systemd
+kind: KubeletConfiguration
+```
+
+#### Calico 配置
+
+文件 `calico/custom-resources.yaml` 是从官方 Github 下载，修改如下：
+
+1、第11行 ：增加 `linuxDataplane: Nftables` ，指定使用 `Nftables` 维护服务代理规则，此新特性 [calico-nftables](https://docs.tigera.io/calico/latest/getting-started/kubernetes/nftables) 文档明确指出 `v3.30` 依然处于技术预览阶段。
+
+2、第16行：`192.168.0.0/16` 修改为 `172.30.0.0/16`，务必与 `kubeadm-init-nftables.yaml` 文件中的 `podSubnet` 和 `clusterCIDR` 配置项保持一致。
+
+```yaml
+# This section includes base Calico installation configuration.
+# For more information, see: https://docs.tigera.io/calico/latest/reference/installation/api#operator.tigera.io/v1.Installation
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  # Configures Calico networking.
+  calicoNetwork:
+    # 设置为使用 Nftables
+    linuxDataplane: Nftables
+    ipPools:
+    - name: default-ipv4-ippool
+      blockSize: 26
+      # 由 192.168.0.0/16 修改为 172.30.0.0/16
+      cidr: 172.30.0.0/16
+      encapsulation: VXLANCrossSubnet
+      natOutgoing: Enabled
+      nodeSelector: all()
+
+# 省略其它未作调整内容
+……
+```
+
+#### Containerd 配置
+
+文件 `containerd/config.toml` 由以下命令生成默认配置：
+
+```shell
+sudo containerd config default > config.toml
+```
+
+根据默认配置修改如下：
+
+1、第 50 行：`registry.k8s.io/pause:3.10` 修改为 `registry.k8s.io/pause:3.10.1`。
+
+2、第 53 行：增加 `/etc/containerd/certs.d`，设定镜像源配置目录。
+
+3、第 108 行：增加 `SystemdCgroup = true`，设定将 `systemd` 用以 `cgoup`。
+
+此文件如无特殊需求，无需修改。
+
+```toml
+version = 3
+root = '/var/lib/containerd'
+state = '/run/containerd'
+temp = ''
+disabled_plugins = []
+required_plugins = []
+oom_score = 0
+imports = []
+
+[grpc]
+  address = '/run/containerd/containerd.sock'
+  tcp_address = ''
+  tcp_tls_ca = ''
+  tcp_tls_cert = ''
+  tcp_tls_key = ''
+  uid = 0
+  gid = 0
+  max_recv_message_size = 16777216
+  max_send_message_size = 16777216
+
+[ttrpc]
+  address = ''
+  uid = 0
+  gid = 0
+
+[debug]
+  address = ''
+  uid = 0
+  gid = 0
+  level = ''
+  format = ''
+
+[metrics]
+  address = ''
+  grpc_histogram = false
+
+[plugins]
+  [plugins.'io.containerd.cri.v1.images']
+    snapshotter = 'overlayfs'
+    disable_snapshot_annotations = true
+    discard_unpacked_layers = false
+    max_concurrent_downloads = 3
+    concurrent_layer_fetch_buffer = 0
+    image_pull_progress_timeout = '5m0s'
+    image_pull_with_sync_fs = false
+    stats_collect_period = 10
+    use_local_image_pull = false
+
+    [plugins.'io.containerd.cri.v1.images'.pinned_images]
+      sandbox = 'registry.k8s.io/pause:3.10.1'
+
+    [plugins.'io.containerd.cri.v1.images'.registry]
+      config_path = '/etc/containerd/certs.d'
+
+    [plugins.'io.containerd.cri.v1.images'.image_decryption]
+      key_model = 'node'
+
+  [plugins.'io.containerd.cri.v1.runtime']
+    enable_selinux = false
+    selinux_category_range = 1024
+    max_container_log_line_size = 16384
+    disable_apparmor = false
+    restrict_oom_score_adj = false
+    disable_proc_mount = false
+    unset_seccomp_profile = ''
+    tolerate_missing_hugetlb_controller = true
+    disable_hugetlb_controller = true
+    device_ownership_from_security_context = false
+    ignore_image_defined_volumes = false
+    netns_mounts_under_state_dir = false
+    enable_unprivileged_ports = true
+    enable_unprivileged_icmp = true
+    enable_cdi = true
+    cdi_spec_dirs = ['/etc/cdi', '/var/run/cdi']
+    drain_exec_sync_io_timeout = '0s'
+    ignore_deprecation_warnings = []
+
+    [plugins.'io.containerd.cri.v1.runtime'.containerd]
+      default_runtime_name = 'runc'
+      ignore_blockio_not_enabled_errors = false
+      ignore_rdt_not_enabled_errors = false
+
+      [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes]
+        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc]
+          runtime_type = 'io.containerd.runc.v2'
+          runtime_path = ''
+          pod_annotations = []
+          container_annotations = []
+          privileged_without_host_devices = false
+          privileged_without_host_devices_all_devices_allowed = false
+          cgroup_writable = false
+          base_runtime_spec = ''
+          cni_conf_dir = ''
+          cni_max_conf_num = 0
+          snapshotter = ''
+          sandboxer = 'podsandbox'
+          io_type = ''
+
+          [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
+            BinaryName = ''
+            CriuImagePath = ''
+            CriuWorkPath = ''
+            IoGid = 0
+            IoUid = 0
+            NoNewKeyring = false
+            Root = ''
+            ShimCgroup = ''
+            SystemdCgroup = true
+# 省略其它未修改配置
+```
+
+
 
 ## 1. 调整系统环境
 
@@ -157,7 +392,7 @@ EOF
 # 使修改生效
 sudo sysctl --system
 
-# 将 cluster-endpoint 解析到控制平面节点
+# 将 cluster-endpoint 解析到主节点
 echo "$CONTROL_IP cluster-endpoint" | sudo tee -a /etc/hosts
 ```
 
@@ -355,6 +590,8 @@ EXPORT_IMAGES="true"
 INSTALL_SSHPASS="true"
 # 是否生成密钥对，如未生成请改为 true
 GENERATE_KEY="false"
+# 是否分发密钥，如已复制密钥请改为 false
+SSH_COPY="true"
 
 # 1、生成密钥对(用于免密登录)
 if [ "$GENERATE_KEY" == "true" ]; then
@@ -366,25 +603,28 @@ if [ "$INSTALL_SSHPASS" == "true" ]; then
   sudo apt install sshpass
 fi
 
-# 3、输入密码
-# 假定：所有节点的密码相同
-read -s -p "Enter password(for all nodes): " SSHPASS
-echo
-export SSHPASS
+# 3、分发密钥
+if [ "$SSH_COPY" == "true" ]; then
+  # 3.1、输入密码
+  # 假定：所有节点的密码相同
+  read -s -p "Enter password(for all nodes): " SSHPASS
+  echo
+  export SSHPASS
 
-# 4、添加工作节点主机信息
-for node in "${NODES[@]}"; do
-  ssh-keyscan "$node" >> ~/.ssh/known_hosts
-done
+  # 3.2、添加工作节点主机信息
+  for node in "${NODES[@]}"; do
+    ssh-keyscan "$node" >> ~/.ssh/known_hosts
+  done
 
-# 5、分发密钥（用于 SSH 登录其它节点执行命令）
-for node in "${NODES[@]}"; do
-  sshpass -e ssh-copy-id $USER@$node || { echo "SSH copy failed on $node"; exit 1; }
-done
-# 移除密码变量
-unset SSHPASS
+  # 3.3、分发密钥（用于 SSH 登录其它节点执行命令）
+  for node in "${NODES[@]}"; do
+   sshpass -e ssh-copy-id $USER@$node || { echo "SSH copy failed on $node"; exit 1; }
+  done
+  # 3.4、移除密码变量
+  unset SSHPASS
+fi
 
-# 6、导出镜像
+# 4、导出镜像
 if [ "$EXPORT_IMAGES" == "true" ]; then
   mkdir -p "${IMAGES_DIR}/docker.io/calico/"
   mkdir -p "${IMAGES_DIR}/registry.k8s.io"
@@ -403,7 +643,7 @@ if [ "$EXPORT_IMAGES" == "true" ]; then
   done
 fi
 
-# 7、分发容器镜像、安装软件包、脚本
+# 5、分发容器镜像、安装软件包、脚本
 WORKER_SCRIPTS=(
   "1-prepare-system.sh"
   "2-install-containerd.sh"
@@ -420,9 +660,11 @@ for node in "${NODES[@]}"; do
   scp -r "$IMAGES_DIR"/* "$USER@$node:$IMAGES_DIR/"
 done
 
-# 输出提示信息
+# 6、输出提示信息
 echo "Successfully! Please login each remote worker node and execute scripts."
 ```
+
+
 
 ## 7. 工作节点加入集群
 
@@ -458,13 +700,15 @@ kube-install/
 
 > 注：
 >
-> 脚本 7 是可选的，如果网络条件很好，完全可以不执行导入。
+> 脚本 7 是可选的，未执行将会自动从网络下载镜像，如果网络条件好，完全可以不执行导入。
 >
 > 经测试，执行脚本 7 导入镜像时可能会提示镜像不完整，此时需回到主节点再次运行脚本 6。
 
-至此，集群搭建的所有工作都已全部做完。
+至此，集群基础搭建的所有工作都已完成。
 
-## 一切顺利
+
+
+## 一切顺利结束
 
 回到主节点，执行命令：
 
@@ -481,220 +725,8 @@ k8s-worker-1    Ready    <none>          21h   v1.34.1
 k8s-worker-2    Ready    <none>          21h   v1.34.1
 ```
 
+**Kubernetes** 集群搭建比较繁杂，每次都得折腾半天，所以写了这些脚本。
+
+我本地测试，搭配已提前上传好镜像的私有仓库，顺利的话大概十分钟就可以全部搞定。
+
 最后，祝大伙的集群搭建过程一切顺利！
-
-## 其它文件说明
-
-### kubeadm
-
-文件 `kubeadm-init-nftables.yaml` 由以下命令生成：
-
-```yaml
-# 生成默认配置文件
-kubeadm config print init-defaults -v=5 --component-configs KubeProxyConfiguration,KubeletConfiguration > kubeadm-init-nftables.yaml
-```
-
-我是在默认文件基础上进行修改和删减，并仅保留修改后的部分。
-
-> 注：Kubeadm 读取配置文件时，如果未配置，则使用默认值，因此仅保留已修改的配置项即可。
-
-这份配置文件，需要特别注意的是子网地址范围，请根据你的网络环境进行修改：
-
-1、第 4 行：`advertiseAddress` 请设定为你的主节点 IP。
-
-2、第 13 行 `serviceSubnet ` ，第 14 行 `podSubnet`，第 19 行 `clusterCIDR`：
-
-- `podSubnet` 和`clusterCIDR` 必须保持一致；
-- `serviceSubnet ` 、`podSubnet` 的子网范围不能重叠，且与其它的子网范围也不能重叠。
-
-```yaml
-apiVersion: kubeadm.k8s.io/v1beta4
-kind: InitConfiguration
-localAPIEndpoint:
-  advertiseAddress: 192.168.50.130
-  bindPort: 6443
----
-apiVersion: kubeadm.k8s.io/v1beta4
-kind: ClusterConfiguration
-controlPlaneEndpoint: cluster-endpoint
-kubernetesVersion: 1.34.1
-networking:
-  # 与 kubeadm init --service-cidr=10.96.0.0/12 同含义
-  serviceSubnet: 10.96.0.0/12
-  podSubnet: 172.30.0.0/16
----
-apiVersion: kubeproxy.config.k8s.io/v1alpha1
-kind: KubeProxyConfiguration
-# 与 podSubnet 保持一致
-clusterCIDR: 172.30.0.0/16
-# 配置为使用 nftables
-mode: nftables
----
-apiVersion: kubelet.config.k8s.io/v1beta1
-cgroupDriver: systemd
-kind: KubeletConfiguration
-```
-
-### calico
-
-文件 `calico/custom-resources.yaml` 是从官方 Github 下载，修改如下：
-
-1、第11行 ：增加 `linuxDataplane: Nftables` ，指定使用 `Nftables` 维护服务代理规则，此新特性 [calico-nftables](https://docs.tigera.io/calico/latest/getting-started/kubernetes/nftables) 文档明确指出 `v3.30` 依然处于技术预览阶段。
-
-2、第16行：`192.168.0.0/16` 修改为 `172.30.0.0/16`，务必与 `kubeadm-init-nftables.yaml` 文件中的 `podSubnet` 和 `clusterCIDR` 配置项保持一致。
-
-```yaml
-# This section includes base Calico installation configuration.
-# For more information, see: https://docs.tigera.io/calico/latest/reference/installation/api#operator.tigera.io/v1.Installation
-apiVersion: operator.tigera.io/v1
-kind: Installation
-metadata:
-  name: default
-spec:
-  # Configures Calico networking.
-  calicoNetwork:
-    # 设置为使用 Nftables
-    linuxDataplane: Nftables
-    ipPools:
-    - name: default-ipv4-ippool
-      blockSize: 26
-      # 由 192.168.0.0/16 修改为 172.30.0.0/16
-      cidr: 172.30.0.0/16
-      encapsulation: VXLANCrossSubnet
-      natOutgoing: Enabled
-      nodeSelector: all()
-
-# 省略其它未作调整内容
-……
-```
-
-### containerd
-
-文件 `containerd/config.toml` 由以下命令生成默认配置：
-
-```shell
-sudo containerd config default > config.toml
-```
-
-根据默认配置修改如下：
-
-1、第 50 行：`registry.k8s.io/pause:3.10` 修改为 `registry.k8s.io/pause:3.10.1`。
-
-2、第 53 行：增加 `/etc/containerd/certs.d`，设定镜像源配置目录。
-
-3、第 108 行：增加 `SystemdCgroup = true`，设定将 `systemd` 用以 `cgoup`。
-
-此文件如无特殊需求，无需修改。
-
-```toml
-version = 3
-root = '/var/lib/containerd'
-state = '/run/containerd'
-temp = ''
-disabled_plugins = []
-required_plugins = []
-oom_score = 0
-imports = []
-
-[grpc]
-  address = '/run/containerd/containerd.sock'
-  tcp_address = ''
-  tcp_tls_ca = ''
-  tcp_tls_cert = ''
-  tcp_tls_key = ''
-  uid = 0
-  gid = 0
-  max_recv_message_size = 16777216
-  max_send_message_size = 16777216
-
-[ttrpc]
-  address = ''
-  uid = 0
-  gid = 0
-
-[debug]
-  address = ''
-  uid = 0
-  gid = 0
-  level = ''
-  format = ''
-
-[metrics]
-  address = ''
-  grpc_histogram = false
-
-[plugins]
-  [plugins.'io.containerd.cri.v1.images']
-    snapshotter = 'overlayfs'
-    disable_snapshot_annotations = true
-    discard_unpacked_layers = false
-    max_concurrent_downloads = 3
-    concurrent_layer_fetch_buffer = 0
-    image_pull_progress_timeout = '5m0s'
-    image_pull_with_sync_fs = false
-    stats_collect_period = 10
-    use_local_image_pull = false
-
-    [plugins.'io.containerd.cri.v1.images'.pinned_images]
-      sandbox = 'registry.k8s.io/pause:3.10.1'
-
-    [plugins.'io.containerd.cri.v1.images'.registry]
-      config_path = '/etc/containerd/certs.d'
-
-    [plugins.'io.containerd.cri.v1.images'.image_decryption]
-      key_model = 'node'
-
-  [plugins.'io.containerd.cri.v1.runtime']
-    enable_selinux = false
-    selinux_category_range = 1024
-    max_container_log_line_size = 16384
-    disable_apparmor = false
-    restrict_oom_score_adj = false
-    disable_proc_mount = false
-    unset_seccomp_profile = ''
-    tolerate_missing_hugetlb_controller = true
-    disable_hugetlb_controller = true
-    device_ownership_from_security_context = false
-    ignore_image_defined_volumes = false
-    netns_mounts_under_state_dir = false
-    enable_unprivileged_ports = true
-    enable_unprivileged_icmp = true
-    enable_cdi = true
-    cdi_spec_dirs = ['/etc/cdi', '/var/run/cdi']
-    drain_exec_sync_io_timeout = '0s'
-    ignore_deprecation_warnings = []
-
-    [plugins.'io.containerd.cri.v1.runtime'.containerd]
-      default_runtime_name = 'runc'
-      ignore_blockio_not_enabled_errors = false
-      ignore_rdt_not_enabled_errors = false
-
-      [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes]
-        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc]
-          runtime_type = 'io.containerd.runc.v2'
-          runtime_path = ''
-          pod_annotations = []
-          container_annotations = []
-          privileged_without_host_devices = false
-          privileged_without_host_devices_all_devices_allowed = false
-          cgroup_writable = false
-          base_runtime_spec = ''
-          cni_conf_dir = ''
-          cni_max_conf_num = 0
-          snapshotter = ''
-          sandboxer = 'podsandbox'
-          io_type = ''
-
-          [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
-            BinaryName = ''
-            CriuImagePath = ''
-            CriuWorkPath = ''
-            IoGid = 0
-            IoUid = 0
-            NoNewKeyring = false
-            Root = ''
-            ShimCgroup = ''
-            SystemdCgroup = true
-# 省略其它未修改配置
-```
-

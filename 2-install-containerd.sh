@@ -29,7 +29,7 @@ sudo mkdir -p /etc/containerd/certs.d/docker.io/
 sudo mkdir -p /etc/containerd/certs.d/registry.k8s.io/
 
 # 5.1. 复制基本配置
-sudo cp -r ./containerd/config.toml /etc/containerd/
+sudo cp ./containerd/config.toml /etc/containerd/
 
 # 5.2. 创建 docker.io 镜像源
 if [ "$USE_MIRROR" == "true" ]; then
@@ -63,4 +63,3 @@ fi
 sudo systemctl daemon-reload
 sudo systemctl enable --now containerd
 sudo systemctl restart containerd
-

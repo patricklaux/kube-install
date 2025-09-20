@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# 准备系统环境
+# 调整系统环境
 
 # 脚本执行异常时退出
 set -euxo pipefail

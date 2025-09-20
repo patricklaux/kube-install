@@ -1,5 +1,6 @@
 #!/bin/bash
 #
+# 仅主节点执行
 # 安装网络插件 calico
 
 kubectl create -f ./calico/operator-crds.yaml

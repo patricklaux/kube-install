@@ -21,6 +21,8 @@ EXPORT_IMAGES="true"
 INSTALL_SSHPASS="true"
 # 是否生成密钥对，如未生成请改为 true
 GENERATE_KEY="false"
+# 是否分发密钥，如已复制密钥请改为 false
+SSH_COPY="true"
 
 # 1、生成密钥对(用于免密登录)
 if [ "$GENERATE_KEY" == "true" ]; then
@@ -32,25 +34,28 @@ if [ "$INSTALL_SSHPASS" == "true" ]; then
   sudo apt install sshpass
 fi
 
-# 3、输入密码
-# 假定：所有节点的密码相同
-read -s -p "Enter password(for all nodes): " SSHPASS
-echo
-export SSHPASS
+# 3、分发密钥
+if [ "$SSH_COPY" == "true" ]; then
+  # 3.1、输入密码
+  # 假定：所有节点的密码相同
+  read -s -p "Enter password(for all nodes): " SSHPASS
+  echo
+  export SSHPASS
 
-# 4、添加工作节点主机信息
-for node in "${NODES[@]}"; do
-  ssh-keyscan "$node" >> ~/.ssh/known_hosts
-done
+  # 3.2、添加工作节点主机信息
+  for node in "${NODES[@]}"; do
+    ssh-keyscan "$node" >> ~/.ssh/known_hosts
+  done
 
-# 5、分发密钥（用于 SSH 登录其它节点执行命令）
-for node in "${NODES[@]}"; do
-  sshpass -e ssh-copy-id $USER@$node || { echo "SSH copy failed on $node"; exit 1; }
-done
-# 移除密码变量
-unset SSHPASS
+  # 3.3、分发密钥（用于 SSH 登录其它节点执行命令）
+  for node in "${NODES[@]}"; do
+    sshpass -e ssh-copy-id $USER@$node || { echo "SSH copy failed on $node"; exit 1; }
+  done
+  # 3.4、移除密码变量
+  unset SSHPASS
+fi
 
-# 6、导出镜像
+# 4、导出镜像
 if [ "$EXPORT_IMAGES" == "true" ]; then
   mkdir -p "${IMAGES_DIR}/docker.io/calico/"
   mkdir -p "${IMAGES_DIR}/registry.k8s.io"
@@ -69,7 +74,7 @@ if [ "$EXPORT_IMAGES" == "true" ]; then
   done
 fi
 
-# 7、分发容器镜像、安装软件包、脚本
+# 5、分发容器镜像、安装软件包、脚本
 WORKER_SCRIPTS=(
   "1-prepare-system.sh"
   "2-install-containerd.sh"
@@ -86,5 +91,5 @@ for node in "${NODES[@]}"; do
   scp -r "$IMAGES_DIR"/* "$USER@$node:$IMAGES_DIR/"
 done
 
-# 输出提示信息
+# 6、输出提示信息
 echo "Successfully! Please login each remote worker node and execute scripts."
