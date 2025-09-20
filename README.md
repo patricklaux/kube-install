@@ -4,13 +4,17 @@ Scripts and files for installing Kubernetes.
 
 ## 特别说明
 
-> ⚠️ 警告
+> ⚠️ 注意：
 >
 > 本项目仅用于搭建个人学习环境，请勿用于生产环境。
 >
-> 本项目包含了预下载的安装软件包，使用前请仔细核对每个软件包的摘要信息，如与官方信息不符请勿使用！！！
+> 本项目的相关脚本和软件安装包依赖于特定平台和环境，请按需调整，勿直接使用。
+>
+> 本项目包含预下载的软件安装包，使用前请核对每个软件包的摘要信息，如与官方不符请勿使用！！！
 
-## 项目文件概览
+## 项目概览
+
+### 文件概览
 
 ```shell
 kube-install/
@@ -21,6 +25,7 @@ kube-install/
 ├── 4-init-master.sh
 ├── 5-install-calico-network.sh
 ├── 6-sync-files-scripts.sh
+├── 7-import-kube-images.sh
 ├── calico
 │   ├── calicoctl-linux-amd64
 │   ├── custom-resources.yaml
@@ -42,7 +47,7 @@ kube-install/
 
   执行：主节点
 
-  作用：下载 `containerd` 和 `calico` 相关软件
+  作用：下载 `containerd` 和 `calico` 的相关配置文件和软件安装包
 
 - `1-prepare-system.sh`
 
@@ -79,8 +84,19 @@ kube-install/
   执行：主节点
 
   作用：分发文件和脚本到工作节点
+  
+- `7-import-kube-images.sh`
 
-**执行顺序**：主节点 0 至 6 全部执行完毕且确认成功后，再在工作节点执行 1 至 3。
+  执行：工作节点
+
+  作用：导入工作节点所必需的镜像
+
+**脚本执行顺序**：
+
+1. 主节点执行脚本 0 至 5 且确认成功；
+3. 主节点执行脚本 6：分发安装文件、容器镜像和执行脚本到每个工作节点；
+4. 每个工作节点执行脚本 1, 2, 3, 7；
+5. 每个工作节点执行加入集群命令。
 
 ### 文件夹说明
 
@@ -88,84 +104,17 @@ kube-install/
 - `containerd`：容器运行时 containerd 的相关配置和安装软件包。
 - `kubeadm`：集群初始化配置文件。
 
+### 其它说明
 
+> 注：
+>
+> 1、所有文件仅需上传到主节点，文件目录约定：`/home/$user/workspace/kube-install/`
+>
+> 2、某些脚本使用的是相对路径，请进入到 `kube-install` 目录执行脚本。
 
+## 1. 调整系统环境
 
-```shell
-# 设置各机器的主机名
-# 192.168.50.130
-sudo hostnamectl set-hostname k8s-control-1
-# 192.168.50.135
-sudo hostnamectl set-hostname k8s-worker-1
-# 192.168.50.136
-sudo hostnamectl set-hostname k8s-worker-2
-```
-
-
-
-```
-sudo apt install sshpass
-
-chmod +x sync-files-scripts.sh 0-wget-tools.sh 1-prepare-system.sh 2-install-containerd.sh 3-install-kube-tools.sh 4-init-master.sh 5-install-calico-network.sh
-```
-
-
-
-## 分发文件和脚本
-
-脚本名称：sync-files-scripts.sh
-
-执行节点：控制平面节点
-
-```shell
-#!/bin/bash
-#
-# 文件和脚本：从控制平面节点分发到各个工作节点
-
-set -euxo pipefail
-
-# 假定所有节点的用户名相同
-USER=patrick
-NODES=("192.168.50.135" "192.168.50.136")
-FILES_DIR="/home/$USER/workspace/kube-install"
-
-# 0、输入密码（假定：所有节点密码相同）
-read -s -p "Enter password(for all nodes): " SSHPASS
-echo
-export SSHPASS
-
-# 1、添加节点信息
-for node in "${NODES[@]}"; do
-  ssh-keyscan "$node" >> ~/.ssh/known_hosts
-done
-
-# 2、分发密钥（用于 SSH 登录其它节点执行命令）
-for node in "${NODES[@]}"; do
-  sshpass -e ssh-copy-id $USER@$node || { echo "SSH copy failed on $node"; exit 1; }
-done
-unset SSHPASS
-
-# 3、 同步文件及脚本
-REMOTE_SCRIPTS=("1-prepare-system.sh" "2-install-containerd.sh" "3-install-kube-tools.sh")
-for node in "${NODES[@]}"; do
-  ssh $USER@$node "cd /home/$USER && mkdir -p workspace/kube-install/containerd/"
-  for script in "${REMOTE_SCRIPTS[@]}"; do
-    scp $FILES_DIR/$script $USER@$node:$FILES_DIR/
-    ssh $USER@$node "chmod 770 $FILES_DIR/$script"
-  done
-  scp $FILES_DIR/containerd/* $USER@$node:$FILES_DIR/containerd/
-done
-
-echo "sync files and scripts successfully! Please login each remote worker node and execute script."
-```
-
-
-
-## 调整系统环境
-
-脚本名称：1-prepare-system.sh
-
-执行节点：所有
+脚本名称：`1-prepare-system.sh`
 
 ```shell
 #!/bin/bash
@@ -214,7 +163,9 @@ echo "$CONTROL_IP cluster-endpoint" | sudo tee -a /etc/hosts
 
 
 
-## 安装容器运行时
+## 2. 安装容器运行时
+
+脚本名称：`2-install-containerd.sh`
 
 ```shell
 #!/bin/bash
@@ -248,7 +199,7 @@ sudo mkdir -p /etc/containerd/certs.d/docker.io/
 sudo mkdir -p /etc/containerd/certs.d/registry.k8s.io/
 
 # 5.1. 复制基本配置
-sudo cp -r ./containerd/config.toml /etc/containerd/
+sudo cp ./containerd/config.toml /etc/containerd/
 
 # 5.2. 创建 docker.io 镜像源
 if [ "$USE_MIRROR" == "true" ]; then
@@ -286,7 +237,9 @@ sudo systemctl restart containerd
 
 
 
-## 安装三大工具
+## 3. 安装三大工具
+
+脚本名称：`3-install-kube-tools.sh`
 
 ```shell
 #!/bin/bash
@@ -331,11 +284,14 @@ EOF
 
 
 
-## 初始化主节点
+## 4. 初始化主节点
+
+脚本名称：`4-init-master.sh`
 
 ```shell
 #!/bin/bash
 #
+# 仅主节点执行
 # 初始化 control-plane
 
 set -euxo pipefail
@@ -343,13 +299,16 @@ set -euxo pipefail
 sudo kubeadm init --config=./kubeadm/kubeadm-init-nftables.yaml
 ```
 
+这一步执行完成后，控制台将会打印一些信息，
 
+## 5. 安装网络插件
 
-## 安装网络插件
+脚本名称：`5-install-calico-network.sh`
 
 ```shell
 #!/bin/bash
 #
+# 仅主节点执行
 # 安装网络插件 calico
 
 kubectl create -f ./calico/operator-crds.yaml
@@ -365,4 +324,377 @@ sudo cp ./calico/calicoctl-linux-amd64 /usr/local/bin/calicoctl
 ```
 
 
+
+## 6. 分发文件和脚本
+
+脚本名称：`6-sync-files-scripts.sh`
+
+> 注：执行此脚本之前，请确认已经使用 `ssh-keygen` 命令生成密钥对。
+
+```shell
+#!/bin/bash
+#
+# 仅主节点执行
+# 1.导出工作节点所需容器镜像；
+# 2.容器镜像、安装软件包和脚本：从主节点分发到各个工作节点
+
+set -euxo pipefail
+
+# 请修改用户名(假定：所有节点的用户名相同)
+USER=patrick
+# 请修改工作节点列表信息
+NODES=("192.168.50.135" "192.168.50.136")
+# 默认文件目录
+FILES_DIR="/home/$USER/workspace/kube-install"
+# 镜像文件目录
+IMAGES_DIR="$FILES_DIR/kube-images"
+
+# 是否导出镜像，如已导出请改为 false
+EXPORT_IMAGES="true"
+# 是否安装 sshpass，如已安装请改为 false
+INSTALL_SSHPASS="true"
+# 是否生成密钥对，如未生成请改为 true
+GENERATE_KEY="false"
+
+# 1、生成密钥对(用于免密登录)
+if [ "$GENERATE_KEY" == "true" ]; then
+  ssh-keygen -f ~/.ssh/id_ed25519 -N "" -q
+fi
+
+# 2、安装 sshpass
+if [ "$INSTALL_SSHPASS" == "true" ]; then
+  sudo apt install sshpass
+fi
+
+# 3、输入密码
+# 假定：所有节点的密码相同
+read -s -p "Enter password(for all nodes): " SSHPASS
+echo
+export SSHPASS
+
+# 4、添加工作节点主机信息
+for node in "${NODES[@]}"; do
+  ssh-keyscan "$node" >> ~/.ssh/known_hosts
+done
+
+# 5、分发密钥（用于 SSH 登录其它节点执行命令）
+for node in "${NODES[@]}"; do
+  sshpass -e ssh-copy-id $USER@$node || { echo "SSH copy failed on $node"; exit 1; }
+done
+# 移除密码变量
+unset SSHPASS
+
+# 6、导出镜像
+if [ "$EXPORT_IMAGES" == "true" ]; then
+  mkdir -p "${IMAGES_DIR}/docker.io/calico/"
+  mkdir -p "${IMAGES_DIR}/registry.k8s.io"
+  images=(
+    docker.io/calico/cni:v3.30.3
+    docker.io/calico/csi:v3.30.3
+    docker.io/calico/node-driver-registrar:v3.30.3
+    docker.io/calico/node:v3.30.3
+    docker.io/calico/pod2daemon-flexvol:v3.30.3
+    docker.io/calico/typha:v3.30.3
+    registry.k8s.io/kube-proxy:v1.34.1
+    registry.k8s.io/pause:3.10.1
+  )
+  for imageName in ${images[@]} ; do
+    sudo ctr -n=k8s.io images export "${IMAGES_DIR}/${imageName}.tar" "$imageName"
+  done
+fi
+
+# 7、分发容器镜像、安装软件包、脚本
+WORKER_SCRIPTS=(
+  "1-prepare-system.sh"
+  "2-install-containerd.sh"
+  "3-install-kube-tools.sh"
+  "7-import-kube-images.sh"
+)
+for node in "${NODES[@]}"; do
+  ssh "$USER@$node" "cd /home/$USER && mkdir -p workspace/kube-install/containerd/ && mkdir -p workspace/kube-install/kube-images/"
+  for script in "${WORKER_SCRIPTS[@]}"; do
+    scp "$FILES_DIR/$script" "$USER@$node:$FILES_DIR/"
+    ssh "$USER@$node" "chmod 770 $FILES_DIR/$script"
+  done
+  scp "$FILES_DIR"/containerd/* "$USER@$node:$FILES_DIR/containerd/"
+  scp -r "$IMAGES_DIR"/* "$USER@$node:$IMAGES_DIR/"
+done
+
+# 输出提示信息
+echo "Successfully! Please login each remote worker node and execute scripts."
+```
+
+## 7. 工作节点加入集群
+
+第 6 步执行成功后，各工作节点都将存在如下文件：
+
+```shell
+kube-install/
+├── 1-prepare-system.sh
+├── 2-install-containerd.sh
+├── 3-install-kube-tools.sh
+├── 7-import-kube-images.sh
+├── containerd
+│   ├── cni-plugins-linux-amd64-v1.8.0.tgz
+│   ├── containerd-config.toml
+│   ├── containerd-2.1.4-linux-amd64.tar.gz
+│   ├── containerd.service
+│   └── runc.amd64
+└── kube-images
+    ├── docker.io
+    │   └── calico
+    │       ├── cni:v3.30.3.tar
+    │       ├── csi:v3.30.3.tar
+    │       ├── node-driver-registrar:v3.30.3.tar
+    │       ├── node:v3.30.3.tar
+    │       ├── pod2daemon-flexvol:v3.30.3.tar
+    │       └── typha:v3.30.3.tar
+    └── registry.k8s.io
+        ├── kube-proxy:v1.34.1.tar
+        └── pause:3.10.1.tar
+```
+
+每个工作节点顺序执行脚本 1, 2, 3, 7，然后再执行主节点生成的 `kubeadm join …… ` 命令信息，即可加入集群。
+
+> 注：
+>
+> 脚本 7 是可选的，如果网络条件很好，完全可以不执行导入。
+>
+> 经测试，执行脚本 7 导入镜像时可能会提示镜像不完整，此时需回到主节点再次运行脚本 6。
+
+至此，集群搭建的所有工作都已全部做完。
+
+## 一切顺利
+
+回到主节点，执行命令：
+
+```shell
+watch -n 2 kubectl get nodes
+```
+
+幸运的话，稍等片刻，将会看到所有节点都变成 `Ready` 状态：
+
+```shell
+NAME            STATUS   ROLES           AGE   VERSION
+k8s-control-1   Ready    control-plane   22h   v1.34.1
+k8s-worker-1    Ready    <none>          21h   v1.34.1
+k8s-worker-2    Ready    <none>          21h   v1.34.1
+```
+
+最后，祝大伙的集群搭建过程一切顺利！
+
+## 其它文件说明
+
+### kubeadm
+
+文件 `kubeadm-init-nftables.yaml` 由以下命令生成：
+
+```yaml
+# 生成默认配置文件
+kubeadm config print init-defaults -v=5 --component-configs KubeProxyConfiguration,KubeletConfiguration > kubeadm-init-nftables.yaml
+```
+
+我是在默认文件基础上进行修改和删减，并仅保留修改后的部分。
+
+> 注：Kubeadm 读取配置文件时，如果未配置，则使用默认值，因此仅保留已修改的配置项即可。
+
+这份配置文件，需要特别注意的是子网地址范围，请根据你的网络环境进行修改：
+
+1、第 4 行：`advertiseAddress` 请设定为你的主节点 IP。
+
+2、第 13 行 `serviceSubnet ` ，第 14 行 `podSubnet`，第 19 行 `clusterCIDR`：
+
+- `podSubnet` 和`clusterCIDR` 必须保持一致；
+- `serviceSubnet ` 、`podSubnet` 的子网范围不能重叠，且与其它的子网范围也不能重叠。
+
+```yaml
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 192.168.50.130
+  bindPort: 6443
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+controlPlaneEndpoint: cluster-endpoint
+kubernetesVersion: 1.34.1
+networking:
+  # 与 kubeadm init --service-cidr=10.96.0.0/12 同含义
+  serviceSubnet: 10.96.0.0/12
+  podSubnet: 172.30.0.0/16
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+# 与 podSubnet 保持一致
+clusterCIDR: 172.30.0.0/16
+# 配置为使用 nftables
+mode: nftables
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+cgroupDriver: systemd
+kind: KubeletConfiguration
+```
+
+### calico
+
+文件 `calico/custom-resources.yaml` 是从官方 Github 下载，修改如下：
+
+1、第11行 ：增加 `linuxDataplane: Nftables` ，指定使用 `Nftables` 维护服务代理规则，此新特性 [calico-nftables](https://docs.tigera.io/calico/latest/getting-started/kubernetes/nftables) 文档明确指出 `v3.30` 依然处于技术预览阶段。
+
+2、第16行：`192.168.0.0/16` 修改为 `172.30.0.0/16`，务必与 `kubeadm-init-nftables.yaml` 文件中的 `podSubnet` 和 `clusterCIDR` 配置项保持一致。
+
+```yaml
+# This section includes base Calico installation configuration.
+# For more information, see: https://docs.tigera.io/calico/latest/reference/installation/api#operator.tigera.io/v1.Installation
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  # Configures Calico networking.
+  calicoNetwork:
+    # 设置为使用 Nftables
+    linuxDataplane: Nftables
+    ipPools:
+    - name: default-ipv4-ippool
+      blockSize: 26
+      # 由 192.168.0.0/16 修改为 172.30.0.0/16
+      cidr: 172.30.0.0/16
+      encapsulation: VXLANCrossSubnet
+      natOutgoing: Enabled
+      nodeSelector: all()
+
+# 省略其它未作调整内容
+……
+```
+
+### containerd
+
+文件 `containerd/config.toml` 由以下命令生成默认配置：
+
+```shell
+sudo containerd config default > config.toml
+```
+
+根据默认配置修改如下：
+
+1、第 50 行：`registry.k8s.io/pause:3.10` 修改为 `registry.k8s.io/pause:3.10.1`。
+
+2、第 53 行：增加 `/etc/containerd/certs.d`，设定镜像源配置目录。
+
+3、第 108 行：增加 `SystemdCgroup = true`，设定将 `systemd` 用以 `cgoup`。
+
+此文件如无特殊需求，无需修改。
+
+```toml
+version = 3
+root = '/var/lib/containerd'
+state = '/run/containerd'
+temp = ''
+disabled_plugins = []
+required_plugins = []
+oom_score = 0
+imports = []
+
+[grpc]
+  address = '/run/containerd/containerd.sock'
+  tcp_address = ''
+  tcp_tls_ca = ''
+  tcp_tls_cert = ''
+  tcp_tls_key = ''
+  uid = 0
+  gid = 0
+  max_recv_message_size = 16777216
+  max_send_message_size = 16777216
+
+[ttrpc]
+  address = ''
+  uid = 0
+  gid = 0
+
+[debug]
+  address = ''
+  uid = 0
+  gid = 0
+  level = ''
+  format = ''
+
+[metrics]
+  address = ''
+  grpc_histogram = false
+
+[plugins]
+  [plugins.'io.containerd.cri.v1.images']
+    snapshotter = 'overlayfs'
+    disable_snapshot_annotations = true
+    discard_unpacked_layers = false
+    max_concurrent_downloads = 3
+    concurrent_layer_fetch_buffer = 0
+    image_pull_progress_timeout = '5m0s'
+    image_pull_with_sync_fs = false
+    stats_collect_period = 10
+    use_local_image_pull = false
+
+    [plugins.'io.containerd.cri.v1.images'.pinned_images]
+      sandbox = 'registry.k8s.io/pause:3.10.1'
+
+    [plugins.'io.containerd.cri.v1.images'.registry]
+      config_path = '/etc/containerd/certs.d'
+
+    [plugins.'io.containerd.cri.v1.images'.image_decryption]
+      key_model = 'node'
+
+  [plugins.'io.containerd.cri.v1.runtime']
+    enable_selinux = false
+    selinux_category_range = 1024
+    max_container_log_line_size = 16384
+    disable_apparmor = false
+    restrict_oom_score_adj = false
+    disable_proc_mount = false
+    unset_seccomp_profile = ''
+    tolerate_missing_hugetlb_controller = true
+    disable_hugetlb_controller = true
+    device_ownership_from_security_context = false
+    ignore_image_defined_volumes = false
+    netns_mounts_under_state_dir = false
+    enable_unprivileged_ports = true
+    enable_unprivileged_icmp = true
+    enable_cdi = true
+    cdi_spec_dirs = ['/etc/cdi', '/var/run/cdi']
+    drain_exec_sync_io_timeout = '0s'
+    ignore_deprecation_warnings = []
+
+    [plugins.'io.containerd.cri.v1.runtime'.containerd]
+      default_runtime_name = 'runc'
+      ignore_blockio_not_enabled_errors = false
+      ignore_rdt_not_enabled_errors = false
+
+      [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes]
+        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc]
+          runtime_type = 'io.containerd.runc.v2'
+          runtime_path = ''
+          pod_annotations = []
+          container_annotations = []
+          privileged_without_host_devices = false
+          privileged_without_host_devices_all_devices_allowed = false
+          cgroup_writable = false
+          base_runtime_spec = ''
+          cni_conf_dir = ''
+          cni_max_conf_num = 0
+          snapshotter = ''
+          sandboxer = 'podsandbox'
+          io_type = ''
+
+          [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
+            BinaryName = ''
+            CriuImagePath = ''
+            CriuWorkPath = ''
+            IoGid = 0
+            IoUid = 0
+            NoNewKeyring = false
+            Root = ''
+            ShimCgroup = ''
+            SystemdCgroup = true
+# 省略其它未修改配置
+```
 
