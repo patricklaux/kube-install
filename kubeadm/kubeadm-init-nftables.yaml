@@ -1,0 +1,24 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 192.168.50.130
+  bindPort: 6443
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+controlPlaneEndpoint: cluster-endpoint
+networking:
+  # 与 kubeadm init --service-cidr=10.96.0.0/12 同含义
+  serviceSubnet: 10.96.0.0/12
+  podSubnet: 172.30.0.0/16
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+# 与 podSubnet 保持一致
+clusterCIDR: 172.30.0.0/16
+# 配置为使用 nftables
+mode: nftables
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+cgroupDriver: systemd
+kind: KubeletConfiguration
