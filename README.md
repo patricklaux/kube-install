@@ -1,6 +1,6 @@
 # kube-install
 
-Scripts and files for installing Kubernetes.
+Scripts and files for installing Kubernetes cluster.
 
 ## 特别说明
 
@@ -141,23 +141,21 @@ kube-install/
 kubeadm config print init-defaults -v=5 --component-configs KubeProxyConfiguration,KubeletConfiguration > kubeadm-init-nftables.yaml
 ```
 
-根据默认文件进行修改和删减后，仅保留了已修改项。
+根据默认文件进行修改和删减后，仅保留了已修改项（未修改项 Kubeadm 将使用默认配置）。
 
-> 注：Kubeadm 读取配置时，未配置项将使用默认值。
+这里需特别注意的是各个 IP 设置，需根据你的实际网络环境进行调整：
 
-这份配置文件，需要特别注意子网范围和主节点 IP，请根据网络环境进行修改：
-
-1、第 4 行：`advertiseAddress` 请设定为你的主节点 IP。
-
-2、第 13 行 `serviceSubnet ` ，第 14 行 `podSubnet`，第 19 行 `clusterCIDR`：
-
-- `podSubnet` 和`clusterCIDR` 必须保持一致；
-- `serviceSubnet ` 、`podSubnet` 的子网范围不能重叠，且与其它的子网范围也不能重叠。
+> 1、`podSubnet` 和 `clusterCIDR` 的配置必须相同；
+>
+> 2、`serviceSubnet` 和 【`podSubnet` & `clusterCIDR`】的网络范围不能重叠；
+>
+> 3、所配置的网络范围也不能与其它网络范围（譬如物理网络）重叠，总之就是各个网络范围不能重叠。
 
 ```yaml
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
+  # 1.更换为实际的主节点 IP
   advertiseAddress: 192.168.50.130
   bindPort: 6443
 ---
@@ -166,15 +164,16 @@ kind: ClusterConfiguration
 controlPlaneEndpoint: cluster-endpoint
 kubernetesVersion: 1.34.1
 networking:
-  # 与 kubeadm init --service-cidr=10.96.0.0/12 同含义
+  # 2.service 的网络范围
   serviceSubnet: 10.96.0.0/12
+  # 3.pod 的网络范围
   podSubnet: 172.30.0.0/16
 ---
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
 kind: KubeProxyConfiguration
-# 与 podSubnet 保持一致
+# 4.与 podSubnet 保持一致
 clusterCIDR: 172.30.0.0/16
-# 配置为使用 nftables
+# 5.配置为使用 nftables
 mode: nftables
 ---
 apiVersion: kubelet.config.k8s.io/v1beta1
@@ -531,10 +530,17 @@ EOF
 
 set -euxo pipefail
 
+USER="patrick"
+
 sudo kubeadm init --config=./kubeadm/kubeadm-init-nftables.yaml
+
+# 复制证书和配置到用户目录
+mkdir -p home/$USER/.kube/config
+sudo cp -i /etc/kubernetes/admin.conf home/$USER/.kube/config
+sudo chown $(id -u):$(id -g) home/$USER/.kube/config
 ```
 
-这一步执行完成后，控制台将会打印一些信息，
+这一步执行完成后，控制台将会打印一些信息，其中包含了重要的加入集群的命令信息。
 
 ## 5. 安装网络插件
 

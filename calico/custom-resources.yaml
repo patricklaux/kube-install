@@ -7,12 +7,12 @@ metadata:
 spec:
   # Configures Calico networking.
   calicoNetwork:
-    # 设置为使用 Nftables
+    # 1.设置为使用 Nftables
     linuxDataplane: Nftables
     ipPools:
     - name: default-ipv4-ippool
       blockSize: 26
-      # 设置为与 podSubnet 一致
+      # 2.设置为与 podSubnet 一致
       cidr: 172.30.0.0/16
       encapsulation: VXLANCrossSubnet
       natOutgoing: Enabled
