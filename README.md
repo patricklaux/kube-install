@@ -530,6 +530,7 @@ EOF
 
 set -euxo pipefail
 
+# 修改为你的用户名
 USER="patrick"
 
 sudo kubeadm init --config=./kubeadm/kubeadm-init-nftables.yaml
